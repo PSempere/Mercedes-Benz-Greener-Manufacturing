@@ -77,12 +77,47 @@ features <- features[-1]
 #construir la formula
 form <- paste("y~", paste(features, collapse = "+"), sep = "")
 
+
+
+#construir mejores parametros 
+bestParams <- list()
+best_r2 <- 0.0
+
+#grid de exploracion
+tunegrid <- expand.grid(numTrees = c(100, 110, 120, 130, 140, 150), numLeaves = c(20:35), learningRate = c(0.1, 0.15, 0.2), minSplit = c(8:12), numBins = c(256, 512, 1024))
+
+#para cada elemento del grid, aplicar fit del modelo y evaluar su rendimiento
+hyperparams <- apply(tunegrid, 1, fit_model_ft)
+
 #entrenamiento con valores por defecto
 ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0)
 
-grid <- NULL
+#custom caret
+customRF <- list(type = "Regression", library = c("MicrosoftML", "MicrosoftR"), loop = NULL)
+customRF$parameters <- data.frame(parameter = c("numTrees", "numLeaves", "learningRate", "minSplit", "numBins"),
+            class = c(rep("integer", 2), "numeric", rep("integer", 2)),
+            label = c("numTrees", "numLeaves", "learningRate", "minSplit", "numBins"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") { }
+customRF$fit <- function(x, y, wts, param, lev = NULL, last, weights, classProbs, ...) {
+    MicrosoftML::rxFastTrees(y ~ ., data = train, type = "regression",
+        numTrees = param$numTrees, numLeaves = param$numLeaves, learningRate = param$learningRate,
+        minSplit = param$minSplit, numBins = param$numBins, verbose = 0)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL) {
+    rxPredict(modelFit, newdata)
+}
+#ES UN REGRESOR, PROB NO APLICA 
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL){
+    rxPredict(modelFit, newdata, type = "prob")
+}
+customRF$sort <- function(x) x[order(x[, 1]),]
+customRF$levels <- function(x) lev(x) # x$classes
 
-fit_model_ft(form, data = train)
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+RxComputeContext('localpar')
+
+customCaret <- rxExec(train(y ~ ., data = train, method = customRF, metric = "Rsquared", tuneGrid = tunegrid, trControl = control))
 
 #puntuar
 scores <- rxPredict(ft, test, #suffix = ".rxFastTrees",

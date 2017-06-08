@@ -14,8 +14,7 @@ computeR2 <- function(alg_name, actual_vector, preds_vector)
 computeR2_silent <- function(actual_vector, preds_vector) {
     #puntuar R2
     r2 <- R2_Score(y_pred = preds_vector, y_true = actual_vector)
-    #mostrar la puntuacion 
-    res <- paste(alg_name, 'R2 Score:', r2)
+    #devuelve la puntuacion 
     return(r2)
 }
 
@@ -32,7 +31,35 @@ fasttree_func <- function(numLeaves, learningRate, minSplit)
     list(Score = computeR2_silent(scores$y, scores$Score), Pred = scores$Score)
 }
 
-fit_model_ft <- function(form, data_to_fit)
+fit_model_ft <- function(paramlist) {
+    #if (length(i) > 1L)
+    #    return(lapply(i, fit_model_ft))
+
+    current_numTrees <- paramlist[["numTrees"]]
+    current_numLeaves <- paramlist[["numLeaves"]]
+    current_learningRate <- paramlist[["learningRate"]]
+    current_minSplit <- paramlist[["minSplit"]]
+    current_numBins <- paramlist[["numBins"]]
+
+    m <- rxFastTrees(formula = form, data = train, type = "regression",
+        numTrees = current_numTrees, numLeaves = current_numLeaves, learningRate = current_learningRate,
+        minSplit = current_minSplit, numBins = current_numBins)
+
+    scores <- rxPredict(m, test, extraVarsToWrite = names(test))
+
+    sc <- computeR2_silent(actual_vector = scores$y, preds_vector = scores$Score)
+
+    if (sc > best_r2) {
+        best_r2 <- sc
+        bestParams <- paramlist
+    }
+
+    ret <- as.data.frame(sc, bestParams)
+
+    return(ret)
+}
+
+fit_model_ft_Bayesian <- function(form, data_to_fit)
 {
     upperBounds <- c(
     numLeaves = 100,
