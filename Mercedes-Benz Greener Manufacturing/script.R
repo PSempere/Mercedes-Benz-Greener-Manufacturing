@@ -4,19 +4,17 @@ library(xgboost)
 library(MLmetrics)
 library(e1071)
 library(caret)
+
+#ejecucion local paralela 
+RxComputeContext('localpar')
+
 #cargamos fichero functions
 wd <- getwd()
-
 source(paste(wd, "/functions.r", sep = ""))
 
 #leemos dato
 train_source <- read.csv(file = "D:/Data/Mercedes Benz/train.csv")
 submission_core <- read.csv(file = "D:/Data/Mercedes Benz/test.csv")
-
-label = "y"
-
-label_train <- train_source$y
-id_train <- train_source$ID
 
 #70% para entrenar
 threshold <- round(0.7 * nrow(train_source))
@@ -77,8 +75,6 @@ features <- features[-1]
 #construir la formula
 form <- paste("y~", paste(features, collapse = "+"), sep = "")
 
-
-
 #construir mejores parametros 
 bestParams <- list()
 best_r2 <- 0.0
@@ -89,9 +85,6 @@ tunegrid <- expand.grid(numTrees = c(100, 110, 120, 130, 140, 150), numLeaves = 
 #para cada elemento del grid, aplicar fit del modelo y evaluar su rendimiento
 hyperparams <- apply(tunegrid, 1, fit_model_ft)
 
-#entrenamiento con valores por defecto
-ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0)
-
 #custom caret
 customRF <- list(type = "Regression", library = c("MicrosoftML", "MicrosoftR"), loop = NULL)
 customRF$parameters <- data.frame(parameter = c("numTrees", "numLeaves", "learningRate", "minSplit", "numBins"),
@@ -99,9 +92,16 @@ customRF$parameters <- data.frame(parameter = c("numTrees", "numLeaves", "learni
             label = c("numTrees", "numLeaves", "learningRate", "minSplit", "numBins"))
 customRF$grid <- function(x, y, len = NULL, search = "grid") { }
 customRF$fit <- function(x, y, wts, param, lev = NULL, last, weights, classProbs, ...) {
+
     MicrosoftML::rxFastTrees(y ~ ., data = train, type = "regression",
         numTrees = param$numTrees, numLeaves = param$numLeaves, learningRate = param$learningRate,
         minSplit = param$minSplit, numBins = param$numBins, verbose = 0)
+
+    resultsTuning$numTrees[i] <- param$numTrees
+    resultsTuning$numLeaves[i] <- param$numLeaves
+    resultsTuning$learningRate[i] <- param$learningRate
+    resultsTuning$minSplit[i] <- param$minSplit
+    resultsTuning$numBins[i] <- param$numBins
 }
 customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL) {
     rxPredict(modelFit, newdata)
@@ -115,9 +115,19 @@ customRF$levels <- function(x) lev(x) # x$classes
 
 control <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
 
-RxComputeContext('localpar')
-
 customCaret <- rxExec(train(y ~ ., data = train, method = customRF, metric = "Rsquared", tuneGrid = tunegrid, trControl = control))
+
+#refrescar resultado
+numExecutions <- nrow(tunegrid)
+resultsTuning <- data.frame(numTrees = integer(numExecutions), numLeaves = integer(numExecutions),
+    learningRate = double(numExecutions), minSplit = integer(numExecutions), numBins = integer(numExecutions)
+    , r2 = double(numExecutions))
+
+#version paralela con RxExec
+time(rxExec(fit_model_parallel, i = rxElemArg(1:numExecutions)))
+
+#entrenamiento con valores por defecto
+ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0)
 
 #puntuar
 scores <- rxPredict(ft, test, #suffix = ".rxFastTrees",

@@ -18,6 +18,34 @@ computeR2_silent <- function(actual_vector, preds_vector) {
     return(r2)
 }
 
+fit_model_parallel <- function(i) {
+    #temp_data <- readRDS(paste(wd, "data.RData"))
+    #train_p <- subset(tempd_data, tag = 
+
+    #print(paste('trying now with', tunegrid$numTrees[], sep=" "))
+
+    m <- rxFastTrees(formula = form, data = train, type = "regression",
+        numTrees = tunegrid$numTrees[i], numLeaves = tunegrid$numLeaves[i], learningRate = tunegrid$learningRate[i],
+        minSplit = tunegrid$minSplit[i], numBins = tunegrid$numBins[i], verbose = 0)
+
+    resultsTuning$numTrees[i] <- tunegrid$numTrees[i]
+    resultsTuning$numLeaves[i] <- tunegrid$numLeaves[i]
+    resultsTuning$learningRate[i] <- tunegrid$learningRate[i]
+    resultsTuning$minSplit[i] <- tunegrid$minSplit[i]
+    resultsTuning$numBins[i] <- tunegrid$numBins[i]
+
+    scores <- rxPredict(m, test, extraVarsToWrite = names(test))
+
+    sc <- computeR2_silent(actual_vector = scores$y, preds_vector = scores$Score)
+
+    resultsTuning$r2[i] <- sc
+
+    if (sc > best_r2) { 
+        best_r2 <- sc
+        bestParams <- list(tunegrid$numTrees[i], tunegrid$numLeaves[i], tunegrid$learningRate[i], tunegrid$minSplit[i], tunegrid$numBins[i])
+    }
+}
+
 fasttree_func <- function(numLeaves, learningRate, minSplit)
 {
     ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0,
