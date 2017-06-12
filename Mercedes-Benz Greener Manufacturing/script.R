@@ -4,6 +4,7 @@ library(xgboost)
 library(MLmetrics)
 library(e1071)
 library(caret)
+library(dplyr)
 
 #ejecucion local paralela 
 RxComputeContext('localpar')
@@ -75,15 +76,23 @@ features <- features[-1]
 #construir la formula
 form <- paste("y~", paste(features, collapse = "+"), sep = "")
 
-#construir mejores parametros 
-bestParams <- list()
-best_r2 <- 0.0
-
 #grid de exploracion
-tunegrid <- expand.grid(numTrees = c(100, 110, 120, 130, 140, 150), numLeaves = c(20:35), learningRate = c(0.1, 0.15, 0.2), minSplit = c(8:12), numBins = c(256, 512, 1024))
+tunegrid <- expand.grid(numTrees = c(500, 700, 900, 1110, 1300), numLeaves = c(50, 150, 250, 400), learningRate = c(0.01, 0.05, 0.1), minSplit = c(10, 12, 14), numBins = c(64, 128, 256))
+
+#añadir puntuaciones vacias
+#tunegrid$r2 <- double(nrow(tunegrid))
+
+#numero de sweeps por el grid
+numExecutions <- nrow(tunegrid)
 
 #para cada elemento del grid, aplicar fit del modelo y evaluar su rendimiento
-hyperparams <- apply(tunegrid, 1, fit_model_ft)
+system.time(hyperparams <- rxExec(fit_model_ft, i = rxElemArg(1:numExecutions)))
+
+#usamos plyr para re-combinar la lista de dataframes en un solo df
+hyperparams <- plyr::rbind.fill(hyperparams)
+
+#la mejor combinacion es el elemento 1 despues de ordenar descendiente por la puntuacion
+hyperparams_sorted <- rxSort(hyperparams, decreasing = TRUE, sortByVars = "sc")
 
 #custom caret
 customRF <- list(type = "Regression", library = c("MicrosoftML", "MicrosoftR"), loop = NULL)
@@ -93,15 +102,14 @@ customRF$parameters <- data.frame(parameter = c("numTrees", "numLeaves", "learni
 customRF$grid <- function(x, y, len = NULL, search = "grid") { }
 customRF$fit <- function(x, y, wts, param, lev = NULL, last, weights, classProbs, ...) {
 
-    MicrosoftML::rxFastTrees(y ~ ., data = train, type = "regression",
+    d <- if (is.data.frame(x)) x else as.data.frame(x)
+    d$y <- y_for_caret
+
+    #print(nrow(x))
+
+    MicrosoftML::rxFastTrees(y ~ ., data = d, type = "regression",
         numTrees = param$numTrees, numLeaves = param$numLeaves, learningRate = param$learningRate,
         minSplit = param$minSplit, numBins = param$numBins, verbose = 0)
-
-    resultsTuning$numTrees[i] <- param$numTrees
-    resultsTuning$numLeaves[i] <- param$numLeaves
-    resultsTuning$learningRate[i] <- param$learningRate
-    resultsTuning$minSplit[i] <- param$minSplit
-    resultsTuning$numBins[i] <- param$numBins
 }
 customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL) {
     rxPredict(modelFit, newdata)
@@ -111,20 +119,11 @@ customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL){
     rxPredict(modelFit, newdata, type = "prob")
 }
 customRF$sort <- function(x) x[order(x[, 1]),]
-customRF$levels <- function(x) lev(x) # x$classes
+customRF$levels <- function(x) lev(x) x$classes
 
 control <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
 
-customCaret <- rxExec(train(y ~ ., data = train, method = customRF, metric = "Rsquared", tuneGrid = tunegrid, trControl = control))
-
-#refrescar resultado
-numExecutions <- nrow(tunegrid)
-resultsTuning <- data.frame(numTrees = integer(numExecutions), numLeaves = integer(numExecutions),
-    learningRate = double(numExecutions), minSplit = integer(numExecutions), numBins = integer(numExecutions)
-    , r2 = double(numExecutions))
-
-#version paralela con RxExec
-time(rxExec(fit_model_parallel, i = rxElemArg(1:numExecutions)))
+system.time(customCaret <- rxExec(train(y ~ ., data = train, method = customRF, metric = "Rsquared", tuneGrid = tunegrid, trControl = control)))
 
 #entrenamiento con valores por defecto
 ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0)
@@ -134,7 +133,7 @@ scores <- rxPredict(ft, test, #suffix = ".rxFastTrees",
                       extraVarsToWrite = names(test)
                       )
 
-computeR2('FastTrees', actual_vector = scores$y, preds_vector = scores$Score)
+computeR2('FastTrees', actual_vector = scores$y, preds_vector = scores$Score, silent = 0)
 
 #rxDForest() 
 DForest_model <- rxDForest(formula = form,
