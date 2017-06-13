@@ -77,10 +77,12 @@ features <- features[-1]
 form <- paste("y~", paste(features, collapse = "+"), sep = "")
 
 #grid de exploracion
-tunegrid <- expand.grid(numTrees = c(500, 700, 900, 1110, 1300), numLeaves = c(50, 150, 250, 400), learningRate = c(0.01, 0.05, 0.1), minSplit = c(10, 12, 14), numBins = c(64, 128, 256))
-
-#añadir puntuaciones vacias
-#tunegrid$r2 <- double(nrow(tunegrid))
+#54,9% de R2
+#tunegrid <- expand.grid(numTrees = c(500, 700, 900, 1110, 1300), numLeaves = c(50, 150, 250, 400), learningRate = c(0.001, 0.05, 0.1), minSplit = c(11, 12, 13), numBins = c(16, 32, 64))
+#500 - 30 - 0.01 - 11 - 16 --> 56,1% --> numBins no tiene casi efecto, minSplits bajos, 0.01 de learning rate
+#450 - 15 - 0.012 - 10 - 8 --> 57,6%
+#350 - 10 - 0.015 - 10 - 8 --> 58,6%
+tunegrid <- expand.grid(numTrees = c(280, 300, 325, 350), numLeaves = c(10, 12, 14), learningRate = c(0.015, 0.02, 0.025), minSplit = c(8, 10), numBins = c(8, 16, 24))
 
 #numero de sweeps por el grid
 numExecutions <- nrow(tunegrid)
@@ -128,12 +130,18 @@ system.time(customCaret <- rxExec(train(y ~ ., data = train, method = customRF, 
 #entrenamiento con valores por defecto
 ft <- rxFastTrees(formula = form, data = train, type = "regression", verbose = 0)
 
-#puntuar
-scores <- rxPredict(ft, test, #suffix = ".rxFastTrees",
-                      extraVarsToWrite = names(test)
-                      )
+#entrenamiento después de la exploración de hiperparámetros
+ft_hp <- rxFastTrees(formula = form, data = train,
+     numTrees = 350, numLeaves = 10, learningRate = 0.015, minSplit = 10, numBins = 8,
+     type = "regression", verbose = 0)
 
+#puntuar
+scores <- rxPredict(ft, test, extraVarsToWrite = names(test))
+#puntuar con hp
+scores_hp <- rxPredict(ft_hp, test, extraVarsToWrite = names(test))
+#mostrar R2 para los dos casos
 computeR2('FastTrees', actual_vector = scores$y, preds_vector = scores$Score, silent = 0)
+computeR2('Optimal FastTrees', actual_vector = scores_hp$y, preds_vector = scores_hp$Score, silent = 0)
 
 #rxDForest() 
 DForest_model <- rxDForest(formula = form,
